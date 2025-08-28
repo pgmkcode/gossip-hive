@@ -1,4 +1,0 @@
-pymisp
-elasticsearch
-python-dotenv
-urllib3
