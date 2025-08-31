@@ -16,8 +16,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def read_last_timestamp(filepath):
     try:
-        with open(filepath, 'r') as archivo:
-            timestamp_str = archivo.read().strip()
+        with open(filepath, 'r') as file:
+            timestamp_str = file.read().strip()
             return timestamp_str
     except FileNotFoundError:
         return None
@@ -58,7 +58,12 @@ high_limit_range = now_utc.strftime('%Y-%m-%dT%H:%M:%S.000Z')
 
 save_last_timestamp(filepath, high_limit_range)
 
+load_dotenv()
+dest_ports_str = os.getenv('DEST_PORT', '22,80,110,143,443,465,993,995,1080,5432,5900')
+dest_ports = [int(port.strip()) for port in dest_ports_str.split(',')]
 
+excluded_ips_str = os.getenv('EXCLUDED_SRC_IPS', '127.0.0.1')
+excluded_ips = [ip.strip() for ip in excluded_ips_str.split(',')]
 
 query = {
   "size": 0,
@@ -82,7 +87,7 @@ query = {
         },
           {
           "terms": {
-            "dest_port": [22, 80, 110, 143, 443, 465, 993, 995, 1080, 5432, 5900]
+            "dest_port": dest_ports
           }
         },
       
@@ -90,7 +95,7 @@ query = {
           "bool": {
             "must_not": [
              
-             {"terms": {"src_ip": ["127.0.0.1", "1.1.1.1", "192.168.0.1", "192.168.0.10"]}}
+             {"terms": {"src_ip": excluded_ips}}
             ]
           }
         }
@@ -140,38 +145,17 @@ query = {
 
 
 
-load_dotenv()
-es = Elasticsearch(os.getenv('ES_URL'))
+
+es = Elasticsearch(os.getenv('ELASTICSEARCH_URL'))
 MISP_URL = os.getenv("MISP_URL")
 MISP_KEY = os.getenv("MISP_KEY")
 MISP_VERIFY_CERT = os.getenv("MISP_VERIFY_CERT", "False").lower() == "true"
-
 
 ts_file = '/tmp/last_datetime_event.txt'
 last_ts = read_last_timestamp(ts_file)
 
 evt_time_str = now_local.strftime('%Y-%m-%d %H:%M')
 
-misp = PyMISP(MISP_URL, MISP_KEY, MISP_VERIFY_CERT)
-evt = MISPEvent()
-evt.info    = f"Servicio de honeypots - {evt_time_str}"
-evt.distribution, evt.threat_level_id, evt.analysis = 2, 4, 0
-evt = misp.add_event(evt)
-eid = evt['Event']['id']
-
-for tag in [
-    'admiralty-scale:source-reliability="b"',
-    'cssa:origin=honeypot',
-    'cssa:sharing-class=unvetted',
-    'PAP:GREEN',
-    'tlp:green',
-    'honeypot-basic:communication-interface=network-interface',
-    'honeypot-basic:data-capture=attacks',
-    'honeypot-basic:interaction-level=low',
-    'misp-galaxy:mitre-d3fend="Decoy Network Resource"',
-    'misp-galaxy:mitre-d3fend="Standalone Honeynet"'
-]:
-    misp.tag(evt, tag)
 
 
 all_buckets = []
@@ -188,33 +172,56 @@ all_buckets.extend(
     resp['aggregations']['unique_combinations']['buckets']
 )
 
+if all_buckets:
+    misp = PyMISP(MISP_URL, MISP_KEY, MISP_VERIFY_CERT)
+    evt = MISPEvent()
+    evt.info    = f"Gossip Hive - {evt_time_str}"
+    evt.distribution = int(os.getenv('MISP_DISTRIBUTION', '2'))
+    evt.threat_level_id = int(os.getenv('MISP_THREAT_LEVEL_ID', '4'))
+    evt.analysis = int(os.getenv('MISP_ANALYSIS', '0'))
+    evt = misp.add_event(evt)
+    eid = evt['Event']['id']
 
-for bucket in all_buckets:
-    hit = bucket['first_hit']['hits']['hits'][0]['_source']
-    obj = MISPObject('network-traffic')
-    src_attr = obj.add_attribute('src_ip', value=hit['src_ip'])
-    dst_attr = obj.add_attribute('dst_port', value=hit['dest_port'])
-    obj.comment = f"Source: {hit['type']}; Timestamp: {hit['@timestamp']}"
+    for tag in [
+        'admiralty-scale:source-reliability="b"',
+        'cssa:origin=honeypot',
+        'cssa:sharing-class=unvetted',
+        'PAP:GREEN',
+        'tlp:green',
+        'honeypot-basic:communication-interface=network-interface',
+        'honeypot-basic:data-capture=attacks',
+        'honeypot-basic:interaction-level=low',
+        'misp-galaxy:mitre-d3fend="Decoy Network Resource"',
+        'misp-galaxy:mitre-d3fend="Standalone Honeynet"'
+    ]:
+        misp.tag(evt, tag)
 
-    
+    for bucket in all_buckets:
+        hit = bucket['first_hit']['hits']['hits'][0]['_source']
+        obj = MISPObject('network-traffic')
+        src_attr = obj.add_attribute('src_ip', value=hit['src_ip'])
+        dst_attr = obj.add_attribute('dst_port', value=hit['dest_port'])
+        obj.comment = f"Source: {hit['type']}; Timestamp: {hit['@timestamp']}"
 
-    if hit.get('event_type') == 'alert' and 'alert' in hit:
-        sig = hit['alert'].get('signature', 'unknown')
-        obj.comment += f"; Alert - Signature: {sig}"
         
-    src_attr.add_tag('diamond-model:Infrastructure')
 
-    if hit['type'] == 'Heralding':
-      src_attr.add_tag('misp-galaxy:mitre-attack-pattern="Brute Force - T1110"')
-      src_attr.add_tag('kill-chain:Exploitation')
-    if hit['type'] == 'Suricata' and hit.get('event_type') != 'alert':
-      src_attr.add_tag('misp-galaxy:mitre-attack-pattern="Active Scanning - T1595"')
-      src_attr.add_tag('kill-chain:Reconnaissance')
-  
-    misp.add_object(evt, obj)
+        if hit.get('event_type') == 'alert' and 'alert' in hit:
+            sig = hit['alert'].get('signature', 'unknown')
+            obj.comment += f"; Alert - Signature: {sig}"
+            
+        src_attr.add_tag('diamond-model:Infrastructure')
 
-misp.publish(eid)
-
-
+        if hit['type'] == 'Heralding':
+            src_attr.add_tag('misp-galaxy:mitre-attack-pattern="Brute Force - T1110"')
+            src_attr.add_tag('kill-chain:Exploitation')
+        if hit['type'] == 'Suricata' and hit.get('event_type') != 'alert':
+            src_attr.add_tag('misp-galaxy:mitre-attack-pattern="Active Scanning - T1595"')
+            src_attr.add_tag('kill-chain:Reconnaissance')
     
+        misp.add_object(evt, obj)
+
+    publish_event = os.getenv('MISP_PUBLISH', 'true').lower() == 'true'
+
+    if publish_event:
+        misp.publish(eid)
 
