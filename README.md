@@ -65,6 +65,13 @@ python3 gossip-hive-misp.py --minutes=15
 Default frequency is 60 minutes. 
 * Configure a cron job to execute it with the same time parameter.
 
+### Screenshots
+- [MISP - Event](https://github.com/pgmkcode/gossip-hive/blob/main/img/misp-event.png)
+- [MISP - Object - Honeypot](https://github.com/pgmkcode/gossip-hive/blob/main/img/misp-object-honeypot.png)
+- [MISP - Object - Suricata Alert](https://github.com/pgmkcode/gossip-hive/blob/main/img/misp-object-suricata-alert.png)
+- [MISP - Object - Suricata](https://github.com/pgmkcode/gossip-hive/blob/main/img/misp-object-suricata.png)
+
+
 ### Compatible honeypots from T-Pot
 - Adbhoney
 - CitrixHoneypot
