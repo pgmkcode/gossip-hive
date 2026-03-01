@@ -1,4 +1,4 @@
-pymisp
-elasticsearch
-python-dotenv
-urllib3
+elasticsearch==9.2.1
+pymisp==2.5.32
+python-dotenv==1.2.1
+urllib3==2.6.3
